@@ -1,18 +1,35 @@
 import os
+import sys
 from dotenv import load_dotenv
 from google import genai
+from google.genai import types
 
 load_dotenv()
+
+if len(sys.argv) < 2:
+    print("Error: Prompt argument required")
+    sys.exit(1)
+
+prompt = sys.argv[1]
+
+verbose = len(sys.argv) > 2 and sys.argv[2] == "--verbose"
+
+if verbose:
+    print(f"User prompt: {prompt}")
+
+messages = [
+    types.Content(role="user", parts=[types.Part(text=prompt)]),
+]
 api_key = os.environ.get("GEMINI_API_KEY")
 
 client = genai.Client(api_key=api_key)
 
 response = client.models.generate_content(
     model="gemini-2.0-flash-001",
-    contents="Why is Boot.dev such a great place to learn backend development? Use one paragraph maximum.",
+    contents=messages,
 )
 print(response.text)
 
-if response.usage_metadata is not None:
+if verbose and response.usage_metadata is not None:
     print(f"Prompt tokens: {response.usage_metadata.prompt_token_count}")
     print(f"Response tokens: {response.usage_metadata.candidates_token_count}")
