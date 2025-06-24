@@ -178,40 +178,79 @@ def generate_content(client, messages, verbose):
 
     All paths you provide should be relative to the working directory. You do not need to specify the working directory in your function calls as it is automatically injected for security reasons.
     """
-    response = client.models.generate_content(
-        model="gemini-2.0-flash-001",
-        contents=messages,
-        config=types.GenerateContentConfig(
-            tools=[available_functions], system_instruction=system_prompt
-        ),
-    )
-    if verbose:
-        print("Prompt tokens:", response.usage_metadata.prompt_token_count)
-        print("Response tokens:", response.usage_metadata.candidates_token_count)
-    print("Response:")
-
-    # Check if the LLM made function calls
-    if response.candidates and response.candidates[0].content.parts:
-        for part in response.candidates[0].content.parts:
-            if hasattr(part, "function_call") and part.function_call:
-                function_call_part = part.function_call
+    
+    max_iterations = 20
+    
+    for iteration in range(max_iterations):
+        response = client.models.generate_content(
+            model="gemini-2.0-flash-001",
+            contents=messages,
+            config=types.GenerateContentConfig(
+                tools=[available_functions], system_instruction=system_prompt
+            ),
+        )
+        
+        if verbose:
+            print(f"Iteration {iteration + 1}:")
+            print("Prompt tokens:", response.usage_metadata.prompt_token_count)
+            print("Response tokens:", response.usage_metadata.candidates_token_count)
+        
+        function_called = False
+        
+        # Process each candidate
+        if response.candidates:
+            for candidate in response.candidates:
+                # Add candidate content to messages
+                messages.append(candidate.content)
                 
-                # Use call_function to handle the function call
-                function_call_result = call_function(function_call_part, verbose)
+                # Collect all function calls from this candidate
+                function_calls = []
+                function_results = []
                 
-                # Check if we got a valid response
-                if not (hasattr(function_call_result, 'parts') and 
-                        len(function_call_result.parts) > 0 and
-                        hasattr(function_call_result.parts[0], 'function_response')):
-                    raise RuntimeError("Invalid function call result structure")
+                if candidate.content.parts:
+                    for part in candidate.content.parts:
+                        if hasattr(part, "function_call") and part.function_call:
+                            function_called = True
+                            function_calls.append(part.function_call)
                 
-                if verbose:
-                    print(f"-> {function_call_result.parts[0].function_response.response}")
+                # Process all function calls and collect results
+                if function_calls:
+                    for function_call_part in function_calls:
+                        # Use call_function to handle the function call
+                        function_call_result = call_function(function_call_part, verbose)
+                        
+                        # Check if we got a valid response
+                        if not (hasattr(function_call_result, 'parts') and 
+                                len(function_call_result.parts) > 0 and
+                                hasattr(function_call_result.parts[0], 'function_response')):
+                            raise RuntimeError("Invalid function call result structure")
+                        
+                        function_results.append(function_call_result.parts[0])
+                        
+                        if verbose:
+                            print(f"-> {function_call_result.parts[0].function_response.response}")
                     
-            elif hasattr(part, "text") and part.text:
-                print(part.text)
-    else:
-        print(response.text)
+                    # Create a single Content object with all function responses
+                    if function_results:
+                        combined_result = types.Content(
+                            role="tool",
+                            parts=function_results
+                        )
+                        messages.append(combined_result)
+        
+        # If no function was called, we're done - print final response and break
+        if not function_called:
+            print("Final response:")
+            if response.text:
+                print(response.text)
+            elif response.candidates and response.candidates[0].content.parts:
+                for part in response.candidates[0].content.parts:
+                    if hasattr(part, "text") and part.text:
+                        print(part.text)
+            break
+    
+    if iteration == max_iterations - 1:
+        print("Maximum iterations reached.")
 
 
 if __name__ == "__main__":
